@@ -39,14 +39,20 @@ const DB = {
 
 function initData() {
   if (!DB.get("users").initialized) {
-    const ownerPw = _0x("owner_" + OWNER_IP + "_mu2024");
+    const DEFAULT_OWNER_PW = "MetaOwner@2024!";
     DB.set("users", {
       initialized: true,
       list: {
-        "owner": { id: "owner", username: "owner", password: bc.hashSync(ownerPw, 10), role: "owner", created: Date.now(), uploadedToday: 0, lastDay: new Date().toDateString(), totalUploads: 0 }
+        "owner": { id: "owner", username: "owner", password: bc.hashSync(DEFAULT_OWNER_PW, 10), role: "owner", created: Date.now(), uploadedToday: 0, lastDay: new Date().toDateString(), totalUploads: 0 }
       }
     });
-    console.log("[MetaUpload] Owner created. Default pw hash stored.");
+    console.log("╔══════════════════════════════════════╗");
+    console.log("║   MetaUpload - Owner Account Created  ║");
+    console.log("║   Username : owner                    ║");
+    console.log("║   Password : MetaOwner@2024!          ║");
+    console.log("║   >> Change password via admin panel  ║");
+    console.log("╚══════════════════════════════════════╝");
+  }
   }
   if (!DB.get("files").initialized) DB.set("files", { initialized: true, list: {} });
   if (!DB.get("config").initialized) DB.set("config", { initialized: true, premiumEnabled: false, maintenance: false, maxFreeDaily: 30*1024*1024, maxVipDaily: 1024*1024*1024 });
@@ -182,7 +188,9 @@ app.post("/api/upload", authMW, upload.single("file"), async (req, res) => {
   const isVideo = req.file.mimetype.startsWith("video/");
   const isImage = req.file.mimetype.startsWith("image/");
   const isGif = req.file.mimetype === "image/gif";
-  const isPremiumContent = cfg.premiumEnabled && isVideo;
+  // User can mark video as premium only if premium mode is enabled; images/gifs are never premium
+  const userWantsPremium = req.body && req.body.markPremium === "1";
+  const isPremiumContent = isVideo && cfg.premiumEnabled && userWantsPremium;
   const fid = pt.basename(req.file.filename, pt.extname(req.file.filename));
   const thumbName = fid + "_t.jpg";
   const gifThumbName = fid + "_g.gif";
@@ -192,6 +200,13 @@ app.post("/api/upload", authMW, upload.single("file"), async (req, res) => {
   let thumbReady = false;
   let gifReady = false;
 
+  // Setup ffmpeg with static binary (Railway compatible)
+  const ffmpegPath = require("ffmpeg-static");
+  const ffprobePath = require("@ffprobe-installer/ffprobe").path;
+  const ffmpeg = require("fluent-ffmpeg");
+  ffmpeg.setFfmpegPath(ffmpegPath);
+  ffmpeg.setFfprobePath(ffprobePath);
+
   // Generate static thumbnail
   try {
     if (isImage && !isGif) {
@@ -199,50 +214,52 @@ app.post("/api/upload", authMW, upload.single("file"), async (req, res) => {
       await sharp(req.file.path).resize(320, 240, { fit: "cover" }).jpeg({ quality: 70 }).toFile(thumbPath);
       thumbReady = true;
     } else if (isVideo) {
-      // Use ffmpeg for video thumbnail - random frame between 1-5s
-      const ffmpeg = require("fluent-ffmpeg");
-      await new Promise((resolve, reject) => {
+      await new Promise((resolve) => {
         ffmpeg(req.file.path)
           .seekInput(Math.random() * 4 + 0.5)
           .frames(1)
           .size("320x240")
           .output(thumbPath)
-          .on("end", resolve)
-          .on("error", reject)
+          .on("end", () => { thumbReady = true; resolve(); })
+          .on("error", (e) => { console.log("[thumb]", e.message); resolve(); })
           .run();
       });
-      thumbReady = true;
     }
-  } catch(e) { console.log("[thumb]", e.message); }
+  } catch(e) { console.log("[thumb-outer]", e.message); }
 
-  // Generate hover GIF (7 segments, 1.5s apart, each ~1s long)
+  // Generate hover GIF: 7 frames each 1s, 1.5s apart → combined webp-palette GIF
   try {
     if (isVideo) {
-      const ffmpeg = require("fluent-ffmpeg");
-      const segments = [];
+      const segPaths = [];
       for (let i = 0; i < 7; i++) {
-        const segPath = pt.join(DIRS.thumbs, fid + `_seg${i}.gif`);
+        const sp = pt.join(DIRS.thumbs, fid + "_s" + i + ".gif");
         await new Promise((resolve) => {
           ffmpeg(req.file.path)
             .seekInput(i * 1.5)
             .duration(1)
-            .size("320x240")
-            .output(segPath)
-            .on("end", () => { segments.push(segPath); resolve(); })
-            .on("error", resolve)
+            .outputOptions(["-vf","fps=8,scale=320:240:flags=lanczos,split[a][b];[a]palettegen=max_colors=64[p];[b][p]paletteuse","−loop","0"])
+            .output(sp)
+            .on("end", () => { if (fs.existsSync(sp)) segPaths.push(sp); resolve(); })
+            .on("error", () => resolve())
             .run();
         });
       }
-      // Combine segments - if ffmpeg concat available
-      if (segments.length > 0) {
-        try {
-          const inputs = segments.map(s => `-i "${s}"`).join(" ");
-          const { execSync } = require("child_process");
-          execSync(`ffmpeg -y ${inputs} -filter_complex "concat=n=${segments.length}:v=1:a=0,scale=320:240" "${gifThumbPath}" 2>/dev/null`);
-          gifReady = fs.existsSync(gifThumbPath);
-        } catch(e2) {}
-        segments.forEach(s => { try { fs.unlinkSync(s); } catch(e3) {} });
+      if (segPaths.length >= 2) {
+        // Concat all segment GIFs into one using fluent-ffmpeg
+        let cmd = ffmpeg();
+        segPaths.forEach(s => cmd.input(s));
+        await new Promise((resolve) => {
+          cmd.complexFilter([`concat=n=${segPaths.length}:v=1:a=0[v]`], ["v"])
+            .outputOptions(["-loop","0"])
+            .output(gifThumbPath)
+            .on("end", () => { gifReady = fs.existsSync(gifThumbPath); resolve(); })
+            .on("error", () => resolve())
+            .run();
+        });
+      } else if (segPaths.length === 1) {
+        try { fs.renameSync(segPaths[0], gifThumbPath); gifReady = true; } catch(e2) {}
       }
+      segPaths.forEach(s => { try { fs.unlinkSync(s); } catch(e3) {} });
     }
   } catch(e) { console.log("[gifthumb]", e.message); }
 
