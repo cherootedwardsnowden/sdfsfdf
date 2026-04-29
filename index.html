@@ -201,6 +201,13 @@ table.admin tr:hover td{background:#202020}
               <small>Images, GIFs, Videos &#8226; Free: 30MB/day &#8226; VIP: 1GB/day</small>
             </div>
             <input type="file" id="file-input" accept="image/*,video/*" onchange="handleFile(this.files[0])">
+            <div id="premium-toggle-wrap" style="display:none;margin-top:10px;padding:8px 10px;background:#1a1000;border:1px solid #5a3a00;border-radius:2px">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#f5a623;font-size:12px">
+                <input type="checkbox" id="mark-premium" style="width:14px;height:14px;accent-color:#f5a623">
+                <span>&#9733; Mark as Premium</span>
+                <span style="color:#888;font-size:10px">(Video will be limited to 15s preview for non-VIP users)</span>
+              </label>
+            </div>
             <div id="prog-wrap">
               <div class="prog-bar"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
               <div id="prog-text">Uploading... 0%</div>
@@ -266,6 +273,13 @@ table.admin tr:hover td{background:#202020}
           <small style="color:#555;display:block;margin-top:5px">Images, GIFs, Videos supported</small>
         </div>
         <input type="file" id="file-input2" accept="image/*,video/*" onchange="handleFile(this.files[0])">
+        <div id="premium-toggle-wrap2" style="display:none;margin-top:10px;padding:8px 10px;background:#1a1000;border:1px solid #5a3a00;border-radius:2px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:#f5a623;font-size:12px">
+            <input type="checkbox" id="mark-premium2" style="width:14px;height:14px;accent-color:#f5a623">
+            <span>&#9733; Mark as Premium</span>
+            <span style="color:#888;font-size:10px">(Video limited to 15s for non-VIP)</span>
+          </label>
+        </div>
         <div id="prog-wrap2" style="display:none;margin-top:12px">
           <div class="prog-bar"><div class="prog-fill" id="prog-fill2" style="width:0%"></div></div>
           <div id="prog-text2" style="text-align:center;color:#888;font-size:11px;margin-top:4px">Uploading... 0%</div>
@@ -498,6 +512,12 @@ function handleFile(file) {
   if (!file) return;
   const allowed = ['image/jpeg','image/png','image/gif','image/webp','video/mp4','video/webm','video/ogg','video/quicktime'];
   if (!allowed.includes(file.type)) { toast('Invalid file type. Only images, GIFs and videos allowed.', 'err'); return; }
+  const isVid = file.type.startsWith('video/');
+  // Show premium toggle only for videos when premium mode is active
+  const ptw = document.getElementById('premium-toggle-wrap');
+  const ptw2 = document.getElementById('premium-toggle-wrap2');
+  if (ptw) ptw.style.display = (isVid && cfgState.premiumEnabled) ? 'block' : 'none';
+  if (ptw2) ptw2.style.display = (isVid && cfgState.premiumEnabled) ? 'block' : 'none';
   doUpload(file);
 }
 
@@ -516,6 +536,10 @@ function doUpload(file) {
 
   const fd = new FormData();
   fd.append('file', file);
+  const mp = document.getElementById('mark-premium');
+  const mp2 = document.getElementById('mark-premium2');
+  const wantsPremium = (mp && mp.checked) || (mp2 && mp2.checked);
+  fd.append('markPremium', wantsPremium ? '1' : '0');
   const xhr = new XMLHttpRequest();
   xhr.open('POST', '/api/upload');
   xhr.withCredentials = true;
@@ -544,6 +568,11 @@ function doUpload(file) {
         ur.style.display = 'block';
         document.getElementById('prem-warning').style.display = r.premium && cfgState.premiumEnabled ? 'block' : 'none';
         toast('Upload complete!', 'ok');
+        // Reset premium checkboxes
+        const mp3 = document.getElementById('mark-premium'); if (mp3) mp3.checked = false;
+        const mp4 = document.getElementById('mark-premium2'); if (mp4) mp4.checked = false;
+        const ptw3 = document.getElementById('premium-toggle-wrap'); if (ptw3) ptw3.style.display = 'none';
+        const ptw4 = document.getElementById('premium-toggle-wrap2'); if (ptw4) ptw4.style.display = 'none';
         checkMe();
         loadRecentFiles();
         if (currentSection === 'myfiles') loadMyFiles();
