@@ -53,7 +53,6 @@ function initData() {
     console.log("║   >> Change password via admin panel  ║");
     console.log("╚══════════════════════════════════════╝");
   }
-  }
   if (!DB.get("files").initialized) DB.set("files", { initialized: true, list: {} });
   if (!DB.get("config").initialized) DB.set("config", { initialized: true, premiumEnabled: false, maintenance: false, maxFreeDaily: 30*1024*1024, maxVipDaily: 1024*1024*1024 });
   if (!DB.get("sessions").initialized) DB.set("sessions", { initialized: true, list: {} });
